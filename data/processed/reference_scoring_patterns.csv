@@ -1,0 +1,4 @@
+age_group,description,His,Ile,Leu,Lys,Met,Cys,SAA,Phe,Tyr,AAA,Thr,Trp,Val
+infant_0_6m,Infant (0 to 6 months) based on human milk composition,21.0,55.0,96.0,69.0,17.0,20.0,37.0,40.0,48.0,88.0,44.0,17.0,55.0
+child_6m_3y,Young Children (6 months to 3 years),18.0,31.0,63.0,52.0,14.0,13.0,27.0,26.0,20.0,46.0,31.0,8.5,41.0
+older_child_adult,"Older Children, Adolescents, and Adults (> 3 years) [Standard Benchmark]",16.0,30.0,61.0,48.0,16.0,7.0,23.0,27.0,14.0,41.0,25.0,6.6,40.0

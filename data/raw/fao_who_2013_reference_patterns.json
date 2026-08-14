@@ -1,0 +1,56 @@
+{
+    "infant_0_6m": {
+        "description": "Infant (0 to 6 months) based on human milk composition",
+        "requirements_mg_per_g": {
+            "His": 21.0,
+            "Ile": 55.0,
+            "Leu": 96.0,
+            "Lys": 69.0,
+            "Met": 17.0,
+            "Cys": 20.0,
+            "SAA": 37.0,
+            "Phe": 40.0,
+            "Tyr": 48.0,
+            "AAA": 88.0,
+            "Thr": 44.0,
+            "Trp": 17.0,
+            "Val": 55.0
+        }
+    },
+    "child_6m_3y": {
+        "description": "Young Children (6 months to 3 years)",
+        "requirements_mg_per_g": {
+            "His": 18.0,
+            "Ile": 31.0,
+            "Leu": 63.0,
+            "Lys": 52.0,
+            "Met": 14.0,
+            "Cys": 13.0,
+            "SAA": 27.0,
+            "Phe": 26.0,
+            "Tyr": 20.0,
+            "AAA": 46.0,
+            "Thr": 31.0,
+            "Trp": 8.5,
+            "Val": 41.0
+        }
+    },
+    "older_child_adult": {
+        "description": "Older Children, Adolescents, and Adults (> 3 years) [Standard Benchmark]",
+        "requirements_mg_per_g": {
+            "His": 16.0,
+            "Ile": 30.0,
+            "Leu": 61.0,
+            "Lys": 48.0,
+            "Met": 16.0,
+            "Cys": 7.0,
+            "SAA": 23.0,
+            "Phe": 27.0,
+            "Tyr": 14.0,
+            "AAA": 41.0,
+            "Thr": 25.0,
+            "Trp": 6.6,
+            "Val": 40.0
+        }
+    }
+}
