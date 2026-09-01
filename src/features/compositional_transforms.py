@@ -25,14 +25,14 @@ def centered_log_ratio_transform(df_eaa: pd.DataFrame, epsilon: float = 1e-5) ->
     Transforms amino acid mass profiles into CLR space.
     Formula: CLR(x_i) = ln(x_i / geometric_mean(x))
     """
-    # 1. Add small epsilon to avoid log(0)
+    # Add epsilon to prevent ln(0) errors
     data = df_eaa.values + epsilon
 
-    # 2. Compute the geometric mean across rows (log-sum-exp trick)
+    # Compute row-wise geometric mean using log-average
     log_data = np.log(data)
     geometric_mean_log = np.mean(log_data, axis=1, keepdims=True)
 
-    # 3. CLR = log(x_i) - log(geometric_mean)
+    # CLR = ln(x_i) - ln(geometric_mean)
     clr_matrix = log_data - geometric_mean_log
 
     clr_columns = [f"clr_{col}" for col in df_eaa.columns]
@@ -40,30 +40,32 @@ def centered_log_ratio_transform(df_eaa: pd.DataFrame, epsilon: float = 1e-5) ->
 
 
 def main():
-    input_path = PROCESSED_DATA_DIR / "food_diaas_calculated.csv"
+    input_path = PROCESSED_DATA_DIR / "usda_amino_acid_profiles.csv"
     if not input_path.exists():
-        raise FileNotFoundError("Run calculate_diaas.py first.")
+        raise FileNotFoundError(f"Missing input: {input_path}")
 
     df = pd.read_csv(input_path)
-    logger.info(f"Loaded dataset with {len(df)} samples.")
+    logger.info(f"Loaded USDA dataset with {len(df)} food records.")
 
-    # Apply CLR transform on essential amino acids
+    # 1. Transform only the essential amino acid columns
     df_clr = centered_log_ratio_transform(df[EAA_COLS])
 
-    # Merge original metadata and target with transformed features
-    feature_df = pd.concat([
-        df[["food_id", "name", "category", "processing", "true_ileal_digestibility", "calculated_diaas"]],
-        df_clr
-    ], axis=1)
+    # 2. Dynamically pick metadata columns that exist in the file (defensive engineering)
+    metadata_candidates = ["fdc_id", "description", "food_category_id", "Protein_g", "SAA", "AAA"]
+    meta_cols = [c for c in metadata_candidates if c in df.columns]
+
+    # 3. Combine metadata with the new CLR feature columns
+    feature_df = pd.concat([df[meta_cols], df_clr], axis=1)
 
     FEATURES_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = FEATURES_DATA_DIR / "features_clr_transformed.csv"
+    output_path = FEATURES_DATA_DIR / "features_usda_clr.csv"
     feature_df.to_csv(output_path, index=False)
-    logger.info(f"Saved transformed feature matrix -> {output_path} (Shape: {feature_df.shape})")
+    logger.info(f"Saved CLR features -> {output_path} (Shape: {feature_df.shape})")
 
-    # Preview results
-    print("\n--- CLR TRANSFORM PREVIEW (First 3 Rows) ---")
-    print(feature_df[["name", "clr_Leu", "clr_Lys", "clr_Met", "calculated_diaas"]].head(3).to_string(index=False))
+    # Preview top rows
+    print("\n--- USDA CLR FEATURE MATRIX (First 3 Rows) ---")
+    preview_cols = ["description", "clr_Leu", "clr_Lys", "clr_Val"]
+    print(feature_df[preview_cols].head(3).to_string(index=False))
 
 
 if __name__ == "__main__":
