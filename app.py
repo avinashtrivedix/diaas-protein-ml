@@ -1,81 +1,55 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import joblib
-from pathlib import Path
+from src.optimize_formulation import optimize_protein_blend
+from src.agent_parser import parse_human_contraints_llama
 
-st.set_page_config(page_title="Protein Quality Predictor", layout="wide")
-
-# Load model artifact
-@st.cache_resource
-def load_artifact():
-    artifact_path = Path("models/protein_rf_model.joblib")
-    if not artifact_path.exists():
-        artifact_path = Path("../models/protein_rf_model.joblib")
-    return joblib.load(artifact_path)
-
-data = load_artifact()
-model = data["model"]
-feature_cols = data["feature_cols"]
-fao_ref = data["fao_reference"]
-
-st.title("Protein Quality & Amino Acid Score Engine")
-st.markdown("Predict amino acid limiting scores and DIAAS protein quality benchmarks from essential amino acid profiles (mg/g protein).")
-
-# Preset selection for rapid testing
-presets = {
-    "Custom": {},
-    "Egg Whole": {"His": 22.0, "Ile": 54.0, "Leu": 86.0, "Lys": 70.0, "Met": 30.0, "Cys": 23.0, "Phe": 53.0, "Tyr": 40.0, "Thr": 47.0, "Trp": 16.0, "Val": 66.0},
-    "Soy Flour": {"His": 26.0, "Ile": 48.0, "Leu": 78.0, "Lys": 63.0, "Met": 13.0, "Cys": 14.0, "Phe": 50.0, "Tyr": 37.0, "Thr": 39.0, "Trp": 13.0, "Val": 49.0},
-    "Wheat Grain": {"His": 23.0, "Ile": 36.0, "Leu": 67.0, "Lys": 28.0, "Met": 16.0, "Cys": 23.0, "Phe": 48.0, "Tyr": 31.0, "Thr": 28.0, "Trp": 12.0, "Val": 43.0}
+# --- 1. Define the Core Data ---
+fao_ref = {
+    "His": 16.0, "Ile": 30.0, "Leu": 59.0, "Lys": 45.0,
+    "SAA": 22.0, "AAA": 38.0, "Thr": 23.0, "Trp": 6.0, "Val": 39.0
 }
 
-selected_preset = st.selectbox("Load Example Amino Acid Profile", list(presets.keys()))
+plant_sources = {
+    "Pea Protein Isolate": {"His": 25.0, "Ile": 43.0, "Leu": 66.0, "Lys": 72.0, "SAA": 19.0, "AAA": 86.0, "Thr": 38.0, "Trp": 10.0, "Val": 50.0},
+    "Brown Rice Protein": {"His": 23.0, "Ile": 41.0, "Leu": 82.0, "Lys": 31.0, "SAA": 38.0, "AAA": 85.0, "Thr": 37.0, "Trp": 11.0, "Val": 58.0},
+    "Soy Protein Isolate": {"His": 26.0, "Ile": 49.0, "Leu": 82.0, "Lys": 63.0, "SAA": 26.0, "AAA": 90.0, "Thr": 38.0, "Trp": 13.0, "Val": 50.0},
+    "Hemp Seed Protein": {"His": 28.0, "Ile": 38.0, "Leu": 66.0, "Lys": 38.0, "SAA": 41.0, "AAA": 80.0, "Thr": 34.0, "Trp": 12.0, "Val": 52.0}
+}
 
-st.subheader("Amino Acid Concentrations (mg / g crude protein)")
-cols = st.columns(4)
+# --- 2. Build the UI ---
+st.set_page_config(page_title="AI Formulation Agent", layout="wide")
+st.title("🧬 Prescriptive AI: Inverse Protein Formulation")
+st.markdown("Enter your product requirements in plain English. The LLM will parse your constraints and the Linear Programming solver will find the mathematically optimal blend.")
 
-inputs = {}
-amino_list = ["His", "Ile", "Leu", "Lys", "Met", "Cys", "Phe", "Tyr", "Thr", "Trp", "Val"]
+# User Input
+user_input = st.text_area(
+    "Formulation Constraints:", 
+    value="I need a sports blend with at least 85mg of leucine. Make it totally soy-free, and keep the hemp seed under 20%."
+)
 
-for idx, aa in enumerate(amino_list):
-    col = cols[idx % 4]
-    default_val = presets[selected_preset].get(aa, 30.0) if selected_preset != "Custom" else 30.0
-    inputs[aa] = col.number_input(f"{aa} (FAO Ref: {fao_ref.get(aa, 'N/A')})", min_value=1.0, max_value=250.0, value=float(default_val), step=1.0)
+if st.button("Generate Optimal Blend"):
+    with st.spinner("LLM is extracting math constraints..."):
+        # Step A: Brain (LLM)
+        bounds, min_leucine = parse_human_contraints_llama(user_input, list(plant_sources.keys()))
+        
+        st.success("Constraints Parsed Successfully!")
+        st.json({"Extracted_Bounds": bounds, "Target_Leucine": min_leucine})
 
-# Calculate SAA and AAA
-inputs["SAA"] = inputs["Met"] + inputs["Cys"]
-inputs["AAA"] = inputs["Phe"] + inputs["Tyr"]
-
-if st.button("Evaluate Quality", type="primary"):
-    # 1. Deterministic FAO scoring
-    ratios = {aa: inputs[aa] / fao_ref[aa] for aa in fao_ref}
-    limiting_aa = min(ratios, key=ratios.get)
-    exact_score = ratios[limiting_aa]
-
-    # 2. Compositional CLR feature transformation
-    raw_vector = np.array([inputs[col.replace("clr_", "")] for col in feature_cols])
-    geo_mean = np.exp(np.mean(np.log(raw_vector)))
-    clr_vals = np.log(raw_vector / geo_mean).reshape(1, -1)
-    clr_df = pd.DataFrame(clr_vals, columns=feature_cols)
-
-    # 3. Predict via Random Forest
-    pred_score = model.predict(clr_df)[0]
-
-    # Display results
-    st.divider()
-    res_col1, res_col2, res_col3 = st.columns(3)
-    
-    res_col1.metric("Limiting Amino Acid", limiting_aa)
-    res_col2.metric("Exact AAS (FAO 2013)", f"{exact_score:.2f}")
-    res_col3.metric("RF Model Prediction", f"{pred_score:.2f}")
-
-    if exact_score >= 1.0:
-        st.success("Status: Complete Protein (Meets or exceeds 100% of human reference requirements).")
-    else:
-        st.warning(f"Status: Incomplete Protein (Deficient in {limiting_aa}; supplies only {exact_score*100:.1f}% of body requirement).")
-
-    # Amino acid breakdown chart
-    st.subheader("Amino Acid Sufficiency vs. FAO Requirement (1.0 = 100%)")
-    df_chart = pd.DataFrame.from_dict(ratios, orient="index", columns=["Ratio"])
-    st.bar_chart(df_chart)
+    with st.spinner("SciPy is running linear optimization..."):
+        # Step B: Muscle (SciPy)
+        result = optimize_protein_blend(
+            ingredients=plant_sources, 
+            fao_reference=fao_ref, 
+            bounds_config=bounds,
+            min_leucine=min_leucine
+        )
+        
+        # Step C: Visualization
+        if result["status"] == "Optimal":
+            st.subheader(f"✅ Optimal Formulation Found (AAS: {result['score']})")
+            
+            # Display metrics
+            cols = st.columns(len(result["formulation"]))
+            for col, (ingredient, percentage) in zip(cols, result["formulation"].items()):
+                col.metric(label=ingredient, value=f"{percentage}%")
+        else:
+            st.error("❌ Infeasible: No mathematical combination of these proteins can satisfy your constraints.")
