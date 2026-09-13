@@ -1,3 +1,4 @@
+import plotly
 import streamlit as st
 from src.optimize_formulation import optimize_protein_blend
 from src.agent_parser import parse_human_contraints_llama
@@ -9,12 +10,11 @@ fao_ref = {
 }
 
 plant_sources = {
-    "Pea Protein Isolate": {"His": 25.0, "Ile": 43.0, "Leu": 66.0, "Lys": 72.0, "SAA": 19.0, "AAA": 86.0, "Thr": 38.0, "Trp": 10.0, "Val": 50.0},
-    "Brown Rice Protein": {"His": 23.0, "Ile": 41.0, "Leu": 82.0, "Lys": 31.0, "SAA": 38.0, "AAA": 85.0, "Thr": 37.0, "Trp": 11.0, "Val": 58.0},
-    "Soy Protein Isolate": {"His": 26.0, "Ile": 49.0, "Leu": 82.0, "Lys": 63.0, "SAA": 26.0, "AAA": 90.0, "Thr": 38.0, "Trp": 13.0, "Val": 50.0},
-    "Hemp Seed Protein": {"His": 28.0, "Ile": 38.0, "Leu": 66.0, "Lys": 38.0, "SAA": 41.0, "AAA": 80.0, "Thr": 34.0, "Trp": 12.0, "Val": 52.0}
+    "Pea Protein Isolate": {"digestibility": 0.89, "His": 25.0, "Ile": 43.0, "Leu": 66.0, "Lys": 72.0, "SAA": 19.0, "AAA": 86.0, "Thr": 38.0, "Trp": 10.0, "Val": 50.0},
+    "Brown Rice Protein": {"digestibility": 0.85, "His": 23.0, "Ile": 41.0, "Leu": 82.0, "Lys": 31.0, "SAA": 38.0, "AAA": 85.0, "Thr": 37.0, "Trp": 11.0, "Val": 58.0},
+    "Soy Protein Isolate": {"digestibility": 0.90, "His": 26.0, "Ile": 49.0, "Leu": 82.0, "Lys": 63.0, "SAA": 26.0, "AAA": 90.0, "Thr": 38.0, "Trp": 13.0, "Val": 50.0},
+    "Hemp Seed Protein": {"digestibility": 0.84, "His": 28.0, "Ile": 38.0, "Leu": 66.0, "Lys": 38.0, "SAA": 41.0, "AAA": 80.0, "Thr": 34.0, "Trp": 12.0, "Val": 52.0}
 }
-
 # --- 2. Build the UI ---
 st.set_page_config(page_title="AI Formulation Agent", layout="wide")
 st.title("🧬 Prescriptive AI: Inverse Protein Formulation")
@@ -32,7 +32,7 @@ if st.button("Generate Optimal Blend"):
         bounds, min_leucine = parse_human_contraints_llama(user_input, list(plant_sources.keys()))
         
         st.success("Constraints Parsed Successfully!")
-        st.json({"Extracted_Bounds": bounds, "Target_Leucine": min_leucine})
+        # st.json({"Extracted_Bounds": bounds, "Target_Leucine": min_leucine})
 
     with st.spinner("SciPy is running linear optimization..."):
         # Step B: Muscle (SciPy)

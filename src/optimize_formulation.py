@@ -14,8 +14,15 @@ def optimize_protein_blend(ingredients, fao_reference, bounds_config=None, min_l
     n_ingredients = len(ingredient_names)
     n_aa = len(aa_keys)
 
-    # Build matrix A (shape: n_ingredients x n_aa)
-    A = np.array([[ingredients[ing][aa] for aa in aa_keys] for ing in ingredient_names])
+
+    
+
+    # the Upgrade: Multiply raw amino acids by teh human digestibility coefficient
+    A = np.array([
+        [ingredients[ing][aa] * ingredients[ing].get("digestibility", 1.0)for aa in aa_keys] 
+        for ing in ingredient_names
+        ])
+    
     fao_vec = np.array([fao_reference[aa] for aa in aa_keys])
 
     # Objective: Minimize -t (Maximize AAS)
@@ -75,11 +82,12 @@ if __name__ == "__main__":
         "SAA": 22.0, "AAA": 38.0, "Thr": 23.0, "Trp": 6.0, "Val": 39.0
     }
     
+    # We noow also include the True Ileal Digesyibility Coeficients
     plant_sources = {
-        "Pea Protein Isolate": {"His": 25.0, "Ile": 43.0, "Leu": 66.0, "Lys": 72.0, "SAA": 19.0, "AAA": 86.0, "Thr": 38.0, "Trp": 10.0, "Val": 50.0},
-        "Brown Rice Protein": {"His": 23.0, "Ile": 41.0, "Leu": 82.0, "Lys": 31.0, "SAA": 38.0, "AAA": 85.0, "Thr": 37.0, "Trp": 11.0, "Val": 58.0},
-        "Soy Protein Isolate": {"His": 26.0, "Ile": 49.0, "Leu": 82.0, "Lys": 63.0, "SAA": 26.0, "AAA": 90.0, "Thr": 38.0, "Trp": 13.0, "Val": 50.0},
-        "Hemp Seed Protein": {"His": 28.0, "Ile": 38.0, "Leu": 66.0, "Lys": 38.0, "SAA": 41.0, "AAA": 80.0, "Thr": 34.0, "Trp": 12.0, "Val": 52.0}
+        "Pea Protein Isolate": {"digestibility": 0.89, "His": 25.0, "Ile": 43.0, "Leu": 66.0, "Lys": 72.0, "SAA": 19.0, "AAA": 86.0, "Thr": 38.0, "Trp": 10.0, "Val": 50.0},
+        "Brown Rice Protein": {"digestibility": 0.85, "His": 23.0, "Ile": 41.0, "Leu": 82.0, "Lys": 31.0, "SAA": 38.0, "AAA": 85.0, "Thr": 37.0, "Trp": 11.0, "Val": 58.0},
+        "Soy Protein Isolate": {"digestibility": 0.90, "His": 26.0, "Ile": 49.0, "Leu": 82.0, "Lys": 63.0, "SAA": 26.0, "AAA": 90.0, "Thr": 38.0, "Trp": 13.0, "Val": 50.0},
+        "Hemp Seed Protein": {"digestibility": 0.84, "His": 28.0, "Ile": 38.0, "Leu": 66.0, "Lys": 38.0, "SAA": 41.0, "AAA": 80.0, "Thr": 34.0, "Trp": 12.0, "Val": 52.0}
     }
 
     # Scenario: Client wants Soy locked to 0%, and Pea between 10% and 30%.
