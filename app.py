@@ -1,4 +1,4 @@
-import plotly
+import plotly.express as px
 import streamlit as st
 from src.optimize_formulation import optimize_protein_blend
 from src.agent_parser import parse_human_contraints_llama
@@ -44,12 +44,26 @@ if st.button("Generate Optimal Blend"):
         )
         
         # Step C: Visualization
-        if result["status"] == "Optimal":
-            st.subheader(f"✅ Optimal Formulation Found (AAS: {result['score']})")
-            
-            # Display metrics
-            cols = st.columns(len(result["formulation"]))
-            for col, (ingredient, percentage) in zip(cols, result["formulation"].items()):
-                col.metric(label=ingredient, value=f"{percentage}%")
-        else:
-            st.error("❌ Infeasible: No mathematical combination of these proteins can satisfy your constraints.")
+    if result["status"] == "Optimal":
+                # Upgraded terminology to reflect biological reality
+                st.subheader(f"✅ Optimal Formulation Found (DIAAS: {result['score']})")
+                
+                # Extract the formulation data
+                formulation_data = result['formulation']
+
+                # Filter out the 0% ingredients so the chart is perfectly clean
+                active_ingredients = {k: v for k, v in formulation_data.items() if v > 0}
+
+                # Generate an enterprise-grade Donut Chart
+                fig = px.pie(
+                    names=list(active_ingredients.keys()),
+                    values=list(active_ingredients.values()),
+                    hole=0.4, 
+                    color_discrete_sequence=px.colors.sequential.Teal
+                )
+
+                # Render it in the Streamlit UI
+                st.plotly_chart(fig, use_container_width=True)
+                
+    else:
+        st.error("❌ Infeasible: No mathematical combination of these proteins can satisfy your constraints.")
