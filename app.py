@@ -1,4 +1,5 @@
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 from src.optimize_formulation import optimize_protein_blend
 from src.agent_parser import parse_human_contraints_llama
@@ -45,25 +46,68 @@ if st.button("Generate Optimal Blend"):
         
         # Step C: Visualization
     if result["status"] == "Optimal":
-                # Upgraded terminology to reflect biological reality
-                st.subheader(f"✅ Optimal Formulation Found (DIAAS: {result['score']})")
-                
-                # Extract the formulation data
-                formulation_data = result['formulation']
+            st.subheader(f"✅ Optimal Formulation Found (DIAAS: {result['score']})")
+            
+            formulation_data = result['formulation']
+            active_ingredients = {k: v for k, v in formulation_data.items() if v > 0}
 
-                # Filter out the 0% ingredients so the chart is perfectly clean
-                active_ingredients = {k: v for k, v in formulation_data.items() if v > 0}
+            # --- PREPARE THE RADAR CHART DATA ---
+            # 1. Calculate the exact amino acid profile of the final blend
+            blend_profile = {}
+            for aa in fao_ref.keys():
+                total_aa = 0
+                for ing, pct in active_ingredients.items():
+                    weight = pct / 100.0
+                    digestible_aa = plant_sources[ing][aa] * plant_sources[ing].get("digestibility", 1.0)
+                    total_aa += weight * digestible_aa
+                blend_profile[aa] = total_aa
 
-                # Generate an enterprise-grade Donut Chart
-                fig = px.pie(
+            # 2. Setup plotting lists (Plotly needs the first item duplicated at the end to close the circle)
+            categories = list(fao_ref.keys())
+            fao_values = list(fao_ref.values())
+            blend_values = [blend_profile[aa] for aa in categories]
+
+            categories.append(categories[0])
+            fao_values.append(fao_values[0])
+            blend_values.append(blend_values[0])
+
+            # --- BUILD THE VISUAL DASHBOARD ---
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Formulation Breakdown**")
+                fig_pie = px.pie(
                     names=list(active_ingredients.keys()),
                     values=list(active_ingredients.values()),
                     hole=0.4, 
                     color_discrete_sequence=px.colors.sequential.Teal
                 )
+                st.plotly_chart(fig_pie, use_container_width=True)
 
-                # Render it in the Streamlit UI
-                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                st.markdown("**Amino Acid Profile (mg/g) vs FAO Requirement**")
+                fig_radar = go.Figure()
+                
+                # Draw the FAO Baseline Polygon
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=fao_values,
+                    theta=categories,
+                    fill='toself',
+                    name='FAO Minimum',
+                    line_color='rgba(255, 99, 132, 1)'
+                ))
+                
+                # Draw Your Custom Blend Polygon on Top
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=blend_values,
+                    theta=categories,
+                    fill='toself',
+                    name='Optimized Blend',
+                    line_color='rgba(54, 162, 235, 1)'
+                ))
+                
+                fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True)), showlegend=True)
+                st.plotly_chart(fig_radar, use_container_width=True)
                 
     else:
         st.error("❌ Infeasible: No mathematical combination of these proteins can satisfy your constraints.")
