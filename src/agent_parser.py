@@ -1,62 +1,106 @@
-from typing import Dict, Tuple, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field
 from langchain_ollama import ChatOllama
 
-# 1. Define the exact strict schema the AI MUST follow
+
+class IngredientBound(BaseModel):
+    ingredient: str = Field(description = "Exact ingredient name from the available list.")
+    min_share: float = Field(description= "Minimum share as a decimal between 0.0 and 1.0")
+    max_share: float = Field(description= "Maximum share as a decimal between 0.0 and 1.0")
+
 class FormulationConstraints(BaseModel):
-    bounds_config: Dict[str, Tuple[float, float]] = Field(
-        description="Dictionary of ingredient names mapped to (min, max) allowed percentages. 0.0 means 0%, 1.0 means 100%."
+    objective: Literal["max_diaas", "min_cost", "min_calories"] = Field(
+        description=(
+            "Optimization goal: 'min_cost' if user asks for cheap/budget/affordable, "
+            "'min_calories' if user asks for low-calorie/lean/cutting, "
+            "otherwise 'max_diaas'."
+        ),
+    )
+    excluded_allergens: List[Literal["Soy", "Gluten"]] = Field(
+        description="Allergens to exclude at the SQL layer. Include 'Soy' if soy-free, 'Gluten' if gluten-free.",
+    )
+    ingredient_bounds: List[IngredientBound] = Field(
+        description="List of specific ingredients limits mentioned by the user. Empty list [] if none."
     )
     min_leucine: Optional[float] = Field(
-        description="The minimum required mg of leucine, or null if not mentioned."
+        description="Minimum required digestible Leucine in mg/g protein, or null if not mentioned.",
     )
 
-def parse_human_contraints_llama(user_input, available_ingredients):
-    """
-    Uses a local LLaMA model with Pydantic Structured Outputs to guarantee exact math formatting.
-    """
-    # 2. Use the modern Chat model, set temperature to 0 for strict logic
+
+def _sanitize_bounds(
+    raw_bounds: List[IngredientBound], available_ingredients: List[str]
+) -> Dict[str, Tuple[float, float]]:
+    """Guards the LP solver against LLM case mismatches, hallucinated names, or inverted bounds."""
+    lookup = {name.lower(): name for name in available_ingredients}
+    clean_bounds: Dict[str, Tuple[float, float]] = {}
+
+    for item in raw_bounds:
+        matched_name = lookup.get(item.ingredient.strip().lower())
+        if not matched_name:
+            continue
+
+        low = max(0.0, min(1.0, float(item.min_share)))
+        high = max(0.0, min(1.0, float(item.max_share)))
+
+        if low <= high:
+            clean_bounds[matched_name] = (low, high)
+
+    return clean_bounds
+
+
+def parse_human_constraints(user_input: str, available_ingredients: List[str]) -> dict:
+    """Translates plain-English formulation requests into validated LP constraints via Llama 3.2."""
     llm = ChatOllama(model="llama3.2", temperature=0)
+    structured_llm = llm.with_structured_output(FormulationConstraints, method="json_schema")
 
-    # 3. Lock the LLM to our Pydantic schema
-    structured_llm = llm.with_structured_output(FormulationConstraints)
-
-    # Notice how much simpler the prompt is now that Pydantic handles the formatting
     prompt = f"""
-    You are an AI formulation scientist extracting mathematical constraints.
-    Available Ingredients: {', '.join(available_ingredients)}
-    
-    Rules:
-    - If user says "no [ingredient]", "zero", or "free", set bounds to [0.0, 0.0]
-    - If user sets a cap (e.g., "under 20%"), set bounds to [0.0, 0.20]
-    - If an ingredient is NOT mentioned, you MUST set its bounds to [0.0, 1.0]
-    
-    User Request: "{user_input}"
-    """
-    
-    print("🧠 LLM is reasoning with Structured Outputs...")
-    
-    # 4. Invoke returns a perfect Pydantic object, not a messy string
-    result = structured_llm.invoke(prompt)
-    
-    # Extract the validated Python properties
-    return result.bounds_config, result.min_leucine
+You are a food science optimization assistant extracting strict mathematical constraints.
+Available ingredient names: {', '.join(available_ingredients)}
 
-# ==========================================
-# TEST THE AGENT
-# ==========================================
+Rules:
+1. objective: 'min_cost' (cheap/budget), 'min_calories' (low-calorie/lean), or 'max_diaas' (default).
+2. excluded_allergens: include 'Soy' for soy-free/no soy, 'Gluten' for gluten-free/no wheat. Otherwise [].
+3. ingredient_bounds: ONLY include ingredients explicitly named in the User Request. NEVER include unmentioned ingredients.
+   - "no X" -> min_share: 0.0, max_share: 0.0
+   - "under 20% X" -> min_share: 0.0, max_share: 0.20
+   - "at least 30% X" -> min_share: 0.30, max_share: 1.0
+4. min_leucine: float in mg/g if mentioned, otherwise null.
+
+Example Input: "Make a low-calorie gluten-free blend with at least 30% Pea Isolate and no Chia Seed."
+Example Output:
+{{
+  "objective": "min_calories",
+  "excluded_allergens": ["Gluten"],
+  "ingredient_bounds": [
+    {{"ingredient": "Pea Isolate", "min_share": 0.3, "max_share": 1.0}},
+    {{"ingredient": "Chia Seed", "min_share": 0.0, "max_share": 0.0}}
+  ],
+  "min_leucine": null
+}}
+
+User Request: "{user_input}"
+"""
+    result = structured_llm.invoke(prompt)
+    return {
+        "objective": result.objective,
+        "excluded_allergens": result.excluded_allergens,
+        "bounds_config": _sanitize_bounds(result.ingredient_bounds, available_ingredients),
+        "min_leucine": result.min_leucine,
+    }
+
+
 if __name__ == "__main__":
-    ingredients_list = [
-        "Pea Protein Isolate", "Brown Rice Protein", 
-        "Soy Protein Isolate", "Hemp Seed Protein"
-    ]
-    
-    test_prompt = "I need a sports blend with at least 85mg of leucine. Make it totally soy-free, and keep the hemp seed under 20% because of the taste."
-    
+    from src.optimize_formulation import load_plant_library
+
+    library = load_plant_library()
+    ingredients_list = list(library.keys())
+
+    test_prompt = (
+        "Build me the cheapest soy-free and gluten-free blend, "
+        "and keep Hemp Seed under 20% because of the taste."
+    )
+
     print(f"Human Request: '{test_prompt}'\n")
-    
-    bounds, leu = parse_human_contraints_llama(test_prompt, ingredients_list)
-    
-    print("✅ Pydantic Validated Matrix Constraints:")
-    print(f"Bounds Config: {bounds}")
-    print(f"Min Leucine: {leu}")
+    parsed = parse_human_constraints(test_prompt, ingredients_list)
+    print("Validated Constraints:")
+    print(parsed)
