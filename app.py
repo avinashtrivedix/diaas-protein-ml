@@ -1,113 +1,207 @@
+import os
+import subprocess
+import sys
+
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from src.optimize_formulation import optimize_protein_blend
-from src.agent_parser import parse_human_contraints_llama
 
-# --- 1. Define the Core Data ---
-fao_ref = {
-    "His": 16.0, "Ile": 30.0, "Leu": 59.0, "Lys": 45.0,
-    "SAA": 22.0, "AAA": 38.0, "Thr": 23.0, "Trp": 6.0, "Val": 39.0
-}
-
-plant_sources = {
-    "Pea Protein Isolate": {"digestibility": 0.89, "His": 25.0, "Ile": 43.0, "Leu": 66.0, "Lys": 72.0, "SAA": 19.0, "AAA": 86.0, "Thr": 38.0, "Trp": 10.0, "Val": 50.0},
-    "Brown Rice Protein": {"digestibility": 0.85, "His": 23.0, "Ile": 41.0, "Leu": 82.0, "Lys": 31.0, "SAA": 38.0, "AAA": 85.0, "Thr": 37.0, "Trp": 11.0, "Val": 58.0},
-    "Soy Protein Isolate": {"digestibility": 0.90, "His": 26.0, "Ile": 49.0, "Leu": 82.0, "Lys": 63.0, "SAA": 26.0, "AAA": 90.0, "Thr": 38.0, "Trp": 13.0, "Val": 50.0},
-    "Hemp Seed Protein": {"digestibility": 0.84, "His": 28.0, "Ile": 38.0, "Leu": 66.0, "Lys": 38.0, "SAA": 41.0, "AAA": 80.0, "Thr": 34.0, "Trp": 12.0, "Val": 52.0}
-}
-# --- 2. Build the UI ---
-st.set_page_config(page_title="AI Formulation Agent", layout="wide")
-st.title("🧬 Prescriptive AI: Inverse Protein Formulation")
-st.markdown("Enter your product requirements in plain English. The LLM will parse your constraints and the Linear Programming solver will find the mathematically optimal blend.")
-
-# User Input
-user_input = st.text_area(
-    "Formulation Constraints:", 
-    value="I need a sports blend with at least 85mg of leucine. Make it totally soy-free, and keep the hemp seed under 20%."
+from src.agent_parser import parse_human_constraints
+from src.optimize_formulation import (
+    FAO_REFERENCE,
+    load_plant_library,
+    optimize_protein_blend,
 )
 
-if st.button("Generate Optimal Blend"):
-    with st.spinner("LLM is extracting math constraints..."):
-        # Step A: Brain (LLM)
-        bounds, min_leucine = parse_human_contraints_llama(user_input, list(plant_sources.keys()))
-        
-        st.success("Constraints Parsed Successfully!")
-        # st.json({"Extracted_Bounds": bounds, "Target_Leucine": min_leucine})
+DB_PATH = "data/formulation_engine.db"
 
-    with st.spinner("SciPy is running linear optimization..."):
-        # Step B: Muscle (SciPy)
-        result = optimize_protein_blend(
-            ingredients=plant_sources, 
-            fao_reference=fao_ref, 
-            bounds_config=bounds,
-            min_leucine=min_leucine
+
+def ensure_database_exists() -> None:
+    """Auto-builds the SQLite database on fresh clones or cloud deployments."""
+    if not os.path.exists(DB_PATH):
+        subprocess.run([sys.executable, "setup_db.py"], check=True)
+
+
+def render_results(result: dict) -> None:
+    """Renders KPI metrics, formulation breakdown, and FAO radar chart."""
+    if result["status"] != "Optimal":
+        st.error(f"❌ {result['status']}")
+        return
+
+    metrics = result["metrics"]
+    st.success(f"Optimal blend found using `{result['objective']}` mode.")
+
+    # Top KPI Row
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Achieved DIAAS", f"{result['score']:.3f}")
+    k2.metric(
+        f"Scoop Size ({int(metrics['target_protein_g'])}g protein)",
+        f"{metrics['scoop_size_g']} g",
+    )
+    k3.metric("Cost / Serving", f"${metrics['cost_per_serving']:.2f}")
+    k4.metric("Calories / Serving", f"{metrics['calories_per_serving']} kcal")
+
+    # Charts & Recipe Table
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Physical Scoop Breakdown (% Powder Weight)**")
+        formulation = result["formulation"]
+        powder_grams = result["powder_grams"]
+
+        fig_pie = px.pie(
+            names=list(formulation.keys()),
+            values=list(formulation.values()),
+            hole=0.4,
+            color_discrete_sequence=px.colors.sequential.Teal,
         )
-        
-        # Step C: Visualization
-    if result["status"] == "Optimal":
-            st.subheader(f"✅ Optimal Formulation Found (DIAAS: {result['score']})")
-            
-            formulation_data = result['formulation']
-            active_ingredients = {k: v for k, v in formulation_data.items() if v > 0}
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-            # --- PREPARE THE RADAR CHART DATA ---
-            # 1. Calculate the exact amino acid profile of the final blend
-            blend_profile = {}
-            for aa in fao_ref.keys():
-                total_aa = 0
-                for ing, pct in active_ingredients.items():
-                    weight = pct / 100.0
-                    digestible_aa = plant_sources[ing][aa] * plant_sources[ing].get("digestibility", 1.0)
-                    total_aa += weight * digestible_aa
-                blend_profile[aa] = total_aa
+        recipe_df = pd.DataFrame(
+            [
+                {
+                    "Ingredient": ing,
+                    "Powder Share (%)": pct,
+                    "Weight per Scoop (g)": powder_grams[ing],
+                }
+                for ing, pct in formulation.items()
+            ]
+        )
+        st.dataframe(recipe_df, use_container_width=True, hide_index=True)
 
-            # 2. Setup plotting lists (Plotly needs the first item duplicated at the end to close the circle)
-            categories = list(fao_ref.keys())
-            fao_values = list(fao_ref.values())
-            blend_values = [blend_profile[aa] for aa in categories]
+    with col2:
+        st.markdown("**Digestible Amino Acid Profile (mg/g) vs. FAO Reference**")
+        blend_profile = result["blend_profile"]
 
-            categories.append(categories[0])
-            fao_values.append(fao_values[0])
-            blend_values.append(blend_values[0])
+        categories = list(FAO_REFERENCE.keys())
+        fao_values = [FAO_REFERENCE[aa] for aa in categories]
+        blend_values = [blend_profile[aa] for aa in categories]
 
-            # --- BUILD THE VISUAL DASHBOARD ---
-            col1, col2 = st.columns(2)
+        # Close the radar polygon
+        categories.append(categories[0])
+        fao_values.append(fao_values[0])
+        blend_values.append(blend_values[0])
 
-            with col1:
-                st.markdown("**Formulation Breakdown**")
-                fig_pie = px.pie(
-                    names=list(active_ingredients.keys()),
-                    values=list(active_ingredients.values()),
-                    hole=0.4, 
-                    color_discrete_sequence=px.colors.sequential.Teal
+        fig_radar = go.Figure()
+        fig_radar.add_trace(
+            go.Scatterpolar(
+                r=fao_values,
+                theta=categories,
+                fill="toself",
+                name="FAO Minimum",
+                line_color="rgba(255, 99, 132, 1)",
+            )
+        )
+        fig_radar.add_trace(
+            go.Scatterpolar(
+                r=blend_values,
+                theta=categories,
+                fill="toself",
+                name="Optimized Blend",
+                line_color="rgba(54, 162, 235, 1)",
+            )
+        )
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=True)),
+            showlegend=True,
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+
+
+# --- App Configuration & Startup ---
+st.set_page_config(page_title="DIAAS Protein Formulation Engine", layout="wide")
+ensure_database_exists()
+all_ingredients = list(load_plant_library(DB_PATH).keys())
+
+st.title("🧬 Prescriptive AI: Inverse Plant Protein Formulation")
+st.markdown(
+    "Translate dietary and commercial constraints into mathematically optimal, "
+    "complete-protein plant blends using SQLite, Pydantic-validated LLMs, and SciPy Linear Programming."
+)
+
+# --- Shared Sidebar Settings ---
+st.sidebar.header("Serving & Quality Targets")
+target_protein_g = st.sidebar.slider(
+    "Target Protein per Serving (g)", min_value=15.0, max_value=40.0, value=25.0, step=1.0
+)
+min_diaas = st.sidebar.slider(
+    "Minimum DIAAS Floor (Cost & Calorie modes)",
+    min_value=0.70,
+    max_value=1.15,
+    value=1.00,
+    step=0.05,
+)
+
+# --- Two Modes: AI Natural Language vs. Direct Lab Controls ---
+tab_ai, tab_manual = st.tabs(["🤖 AI Constraint Parser (Local Llama 3.2)", "🎛️ Manual Lab Controls"])
+
+with tab_ai:
+    user_input = st.text_area(
+        "Describe your product requirements in plain English:",
+        value="Build me the cheapest soy-free and gluten-free blend, and keep Hemp Seed under 20% because of the taste.",
+        height=100,
+    )
+
+    if st.button("Parse & Optimize", type="primary"):
+        try:
+            with st.spinner("Llama 3.2 is extracting structured constraints..."):
+                parsed = parse_human_constraints(user_input, all_ingredients)
+        except Exception as exc:
+            st.warning(
+                "Local Ollama server (`llama3.2`) is unreachable. "
+                "Start Ollama locally to use AI parsing, or switch to the **Manual Lab Controls** tab."
+            )
+            st.caption(f"Connection detail: {exc}")
+        else:
+            with st.expander("Validated Pydantic -> Solver Payload", expanded=True):
+                st.json(parsed)
+
+            with st.spinner("Running SQLite allergen filter & SciPy LP solver..."):
+                filtered_library = load_plant_library(
+                    DB_PATH, excluded_allergens=parsed["excluded_allergens"]
                 )
-                st.plotly_chart(fig_pie, use_container_width=True)
+                result = optimize_protein_blend(
+                    ingredients=filtered_library,
+                    objective=parsed["objective"],
+                    min_diaas=min_diaas,
+                    bounds_config=parsed["bounds_config"],
+                    min_leucine=parsed["min_leucine"],
+                    target_protein_g=target_protein_g,
+                )
+            render_results(result)
 
-            with col2:
-                st.markdown("**Amino Acid Profile (mg/g) vs FAO Requirement**")
-                fig_radar = go.Figure()
-                
-                # Draw the FAO Baseline Polygon
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=fao_values,
-                    theta=categories,
-                    fill='toself',
-                    name='FAO Minimum',
-                    line_color='rgba(255, 99, 132, 1)'
-                ))
-                
-                # Draw Your Custom Blend Polygon on Top
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=blend_values,
-                    theta=categories,
-                    fill='toself',
-                    name='Optimized Blend',
-                    line_color='rgba(54, 162, 235, 1)'
-                ))
-                
-                fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True)), showlegend=True)
-                st.plotly_chart(fig_radar, use_container_width=True)
-                
-    else:
-        st.error("❌ Infeasible: No mathematical combination of these proteins can satisfy your constraints.")
+with tab_manual:
+    objective_labels = {
+        "Maximize Protein Quality (DIAAS)": "max_diaas",
+        "Minimize Cost per Serving": "min_cost",
+        "Minimize Calories per Serving": "min_calories",
+    }
+
+    c1, c2 = st.columns(2)
+    with c1:
+        selected_label = st.selectbox("Optimization Objective", list(objective_labels.keys()))
+        objective = objective_labels[selected_label]
+        excluded_allergens = st.multiselect("Exclude Allergens (SQL Layer)", ["Soy", "Gluten"])
+    with c2:
+        excluded_ingredients = st.multiselect("Exclude Specific Ingredients (0% Cap)", all_ingredients)
+        enforce_leucine = st.checkbox("Enforce Minimum Digestible Leucine (mg/g protein)")
+        min_leucine = (
+            st.number_input("Minimum Leucine (mg/g)", min_value=40.0, max_value=110.0, value=70.0, step=1.0)
+            if enforce_leucine
+            else None
+        )
+
+    if st.button("Run Linear Solver", type="primary"):
+        bounds_config = {ing: (0.0, 0.0) for ing in excluded_ingredients}
+        with st.spinner("Running SQLite allergen filter & SciPy LP solver..."):
+            filtered_library = load_plant_library(DB_PATH, excluded_allergens=excluded_allergens)
+            result = optimize_protein_blend(
+                ingredients=filtered_library,
+                objective=objective,
+                min_diaas=min_diaas,
+                bounds_config=bounds_config,
+                min_leucine=min_leucine,
+                target_protein_g=target_protein_g,
+            )
+        render_results(result)
