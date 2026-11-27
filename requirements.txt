@@ -1,11 +1,8 @@
+streamlit
+plotly
 numpy
 pandas
 scipy
-scikit-learn
-xgboost
-torch
-torchvision
-matplotlib
-seaborn
-tqdm
+pydantic
+langchain-ollama
 pytest
