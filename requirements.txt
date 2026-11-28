@@ -6,3 +6,4 @@ scipy
 pydantic
 langchain-ollama
 pytest
+langchain-google-genai
